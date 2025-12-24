@@ -1,9 +1,9 @@
 /* Tools / Board / Heltec ESP32 Series Dev-boards --> Wireless Tracker
- * 
+ *
  * follow functions:
- * 
+ *
  * - Only transmit data to LoRa device
- * 
+ *
  *
  * by Perfecto Martís Flórez
  * http://es.linkedin.com/in/perfectomartisflorez/
@@ -17,12 +17,12 @@
 #include "Arduino.h"
 #include "WiFi.h"
 #include "LoRaWan_APP.h"
-#include <Wire.h>  
+#include <Wire.h>
 #include "HT_st7735.h"
 #include "HT_TinyGPS++.h"
 #include <../../../include/secrets.h>
 
-typedef enum 
+typedef enum
 {
 	WIFI_CONNECT_TEST_INIT,
 	WIFI_CONNECT_TEST,
@@ -67,26 +67,6 @@ bool interrupt_flag = false;
 char txpacket[BUFFER_SIZE];
 char rxpacket[BUFFER_SIZE];
 
-//uint64_t chipid;
-char chipidTxt[13];
-
-union macID {
-	uint8_t macbytes[6];
-	uint64_t mac64;		//The chip ID is essentially its MAC address(length: 6 bytes). Los 16 bits más altos del uint64_t devuelto están a cero.
-} chipid;
-
-struct __attribute__((packed)) Mensajes {
-	uint8_t node_id[6];
-	uint16_t year;
-	uint8_t month;
-	uint8_t day;
-	uint8_t hour;
-	uint8_t minutes;
-	uint8_t seconds;
-	int32_t latitude;		// lat × 1e7
-	int32_t longitude;	// lon × 1e7
-} mensaje;
-
 static RadioEvents_t RadioEvents;
 void OnTxDone( void );
 void OnTxTimeout( void );
@@ -114,7 +94,8 @@ unsigned int counter = 0;
 bool receiveflag = false; // software flag for LoRa receiver, received data makes it true.
 long lastSendTime = 0;        // last send time
 int interval = 1000;          // interval between sends
-
+uint64_t chipid;
+char chipidTxt[13];
 int16_t RssiDetection = 0;
 
 
@@ -145,6 +126,7 @@ void OnRxDone( uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr )
 	receiveflag = true;
 	state=STATE_TX;
 }
+
 
 void lora_init(void)
 {
@@ -224,7 +206,7 @@ bool wifi_connect_try(uint8_t try_num)
 		st7735.st7735_write_str(0, 0, "wifi connect failed", Font_7x10);
 		custom_delay(1000);
 		return false;
-	}	
+	}
 }
 
 void wifi_scan(unsigned int value)
@@ -237,7 +219,7 @@ void wifi_scan(unsigned int value)
 		st7735.st7735_write_str(0, 0, "Scan start...", Font_7x10);
 		int n = WiFi.scanNetworks();
 		st7735.st7735_write_str(0, 30, "Scan done", Font_7x10);
-		
+
 		if (n == 0) {
 			st7735.st7735_fill_screen(ST7735_BLACK);
 			st7735.st7735_write_str(0, 0, "no network found", Font_7x10);
@@ -246,7 +228,7 @@ void wifi_scan(unsigned int value)
 			st7735.st7735_fill_screen(ST7735_BLACK);
 			st7735.st7735_write_str(0, 0, (String)n, Font_7x10);
 			st7735.st7735_write_str(30, 0, "networks found:", Font_7x10);
-			
+
 			custom_delay(2000);
 
 			for (int i = 0; (i < n) && (i < 0); ++i) {
@@ -297,12 +279,10 @@ void enter_deepsleep(void)
 	pinMode(LORA_MOSI,ANALOG);
 	esp_sleep_enable_timer_wakeup(600*1000*(uint64_t)1000);
 	esp_deep_sleep_start();
-} 
+}
 
 void lora_status_handle(void)
 {
-	int n;
-
 	if(resendflag) {
 		state = STATE_TX;
 		resendflag = false;
@@ -328,31 +308,20 @@ void lora_status_handle(void)
 		st7735.st7735_write_str(0, 40, packSize, Font_7x10);
 		st7735.st7735_write_str(0, 60, send_num, Font_7x10);
 		if((rxNumber%2)==0) {
-			digitalWrite(LED, HIGH);  
+			digitalWrite(LED, HIGH);
 		}
 	}
 	switch(state) {
 		case STATE_TX:
 			delay(1000);
 			txNumber++;
-			for(n=5;n>=0;n--){
-				mensaje.node_id[n] = chipid.macbytes[n];
-				Serial.printf("%02X",chipid.macbytes[n]);
-				if (n>0) Serial.print(":");
-			}
-			mensaje.year = gps.date.year();
-			mensaje.month = gps.date.month();
-			mensaje.day = gps.date.day();
-			mensaje.hour = gps.time.hour();
-			mensaje.minutes = gps.time.minute();
-			mensaje.seconds = gps.time.second();
-			mensaje.latitude = (int32_t)round(gps.location.lat() * 1e7);
-			mensaje.longitude = (int32_t)round(gps.location.lng() * 1e7);
-			Serial.printf("\r\nEnviando mensaje: %d bytes --> ", sizeof(mensaje));
-			Serial.printf("%d/%02d/%02d %02d:%02d:%02d@%f,%f\r\n",
-				mensaje.year,mensaje.month,mensaje.day,mensaje.hour,mensaje.minutes,mensaje.seconds,
-				gps.location.lat(),gps.location.lng());
-			Radio.Send( (uint8_t *) &mensaje, sizeof(mensaje) );
+			sprintf(txpacket,"%s@%d/%02d/%02d %02d:%02d:%02d@%f,%f #Hello %d,Rssi:%d",
+				chipidTxt,
+				gps.date.year(),gps.date.month(),gps.date.day(),gps.time.hour(),gps.time.minute(),gps.time.second(),
+				gps.location.lat(),gps.location.lng(),
+				txNumber,Rssi);
+			Serial.printf("\r\nsending packet \"%s\" , length %d\r\n",txpacket, strlen(txpacket));
+			Radio.Send( (uint8_t *)txpacket, strlen(txpacket) );
 			state=LOWPOWER;
 			break;
 		case STATE_TX_DONE:
@@ -387,8 +356,6 @@ void Vext_OFF()
 
 void gps_read(void)
 {
-	char txt[60];
-
 	if(Serial2.available()>0) {
 		if(Serial2.peek()!='\n') {
 			gps.encode(Serial2.read());
@@ -398,17 +365,20 @@ void gps_read(void)
 				return;
 			}
 			st7735.st7735_fill_screen(ST7735_BLACK);
-			st7735.st7735_write_str(0, 0, "gps_test", Font_7x10);
-			Serial.print("GPS - ");
-			snprintf(txt, sizeof(txt),"%d/%02d/%02d %02d:%02d:%02d.%02d",gps.date.year(),gps.date.month(),gps.date.day(),gps.time.hour(),gps.time.minute(),gps.time.second(),gps.time.centisecond());
-			st7735.st7735_write_str(0, 10, txt, Font_7x10);
-			Serial.print(txt); Serial.print(" - ");
-			snprintf(txt, sizeof(txt), "LAT: %.6f\0", gps.location.lat());
-			st7735.st7735_write_str(0, 20, txt, Font_7x10);
-			Serial.print(txt); Serial.print(" - ");
-			snprintf(txt, sizeof(txt), "LON: %.6f\0", gps.location.lng());
-			st7735.st7735_write_str(0, 30, txt, Font_7x10);
-			Serial.println(txt);
+			st7735.st7735_write_str(0, 0, (String)"gps_test", Font_7x10);
+			String time_str = (String)gps.time.hour() + ":" + (String)gps.time.minute() + ":" + (String)gps.time.second()+ ":"+(String)gps.time.centisecond();
+			st7735.st7735_write_str(0, 10, time_str, Font_7x10);
+			String latitude = "LAT: " + (String)gps.location.lat();
+			st7735.st7735_write_str(0, 20, latitude, Font_7x10);
+			String longitude  = "LON: "+  (String)gps.location.lng();
+			st7735.st7735_write_str(0, 30, longitude, Font_7x10);
+
+			Serial.printf(" %02d:%02d:%02d.%02d ",gps.time.hour(),gps.time.minute(),gps.time.second(),gps.time.centisecond());
+			Serial.print("LAT: ");
+			Serial.print(gps.location.lat(),6);
+			Serial.print(", LON: ");
+			Serial.print(gps.location.lng(),6);
+			Serial.println();
 			delay(5000);
 			while(Serial2.read()>0);
 		}
@@ -417,8 +387,6 @@ void gps_read(void)
 
 void setup()
 {
-	int n;
-
 	Serial.begin(115200);
 	Vext_ON();
 	Serial2.begin(115200,SERIAL_8N1,33,34);
@@ -432,17 +400,12 @@ void setup()
 	deepsleepflag=false;
 	interrupt_flag = false;
 
-	chipid.mac64=ESP.getEfuseMac();//The chip ID is essentially its MAC address(length: 6 bytes).
-	snprintf(chipidTxt, sizeof(chipidTxt), "%04X%08X",(uint16_t)(chipid.mac64>>32),(uint32_t)chipid.mac64);
-	Serial.printf("ESP32ChipID=%04X",(uint16_t)(chipid.mac64>>32));//print High 2 bytes
-	Serial.printf("%08X\n",(uint32_t)chipid.mac64);//print Low 4bytes.
-	for(n=5;n>=0;n--){
-		Serial.printf("%02X",chipid.macbytes[n]);
-		if (n>0) Serial.print(":");
-	}
-	Serial.println();
-	//Serial.printf("%02X:%02X:%02X:%02X:%02X:%02X",chipid.macbytes[5],chipid.macbytes[4],chipid.macbytes[3],chipid.macbytes[2],chipid.macbytes[1],chipid.macbytes[0]);
- 
+	chipid=ESP.getEfuseMac();//The chip ID is essentially its MAC address(length: 6 bytes).
+	sprintf(chipidTxt,"%04X%08X",(uint16_t)(chipid>>32),(uint32_t)chipid);
+	chipidTxt[13]=0;
+	Serial.printf("ESP32ChipID=%04X",(uint16_t)(chipid>>32));//print High 2 bytes
+	Serial.printf("%08X\n",(uint32_t)chipid);//print Low 4bytes.
+
 	pinMode(LED ,OUTPUT);
 	digitalWrite(LED, LOW);
 	test_status = WIFI_CONNECT_TEST_INIT;

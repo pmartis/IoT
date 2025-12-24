@@ -42,37 +42,6 @@
 char txpacket[BUFFER_SIZE];
 char rxpacket[BUFFER_SIZE];
 
-struct __attribute__((packed)) Mensajes {
-	uint8_t node_id[6];
-	uint16_t year;
-	uint8_t month;
-	uint8_t day;
-	uint8_t hour;
-	uint8_t minutes;
-	uint8_t seconds;
-	int32_t latitude;		// lat × 1e7
-	int32_t longitude;	// lon × 1e7
-} mensaje;
-
-#define NUMNODOS 5
-#define NUMFILAS 10
-uint8_t nodosRegistrados[NUMNODOS][6] =  {{0x10, 0x20, 0xBA, 0x69, 0xC0, 0xE0},
-                                          {0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-                                          {0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-                                          {0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-                                          {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}};
-
-struct __attribute__((packed)) DatosNodos {
-	uint16_t year;
-	uint8_t month;
-	uint8_t day;
-	uint8_t hour;
-	uint8_t minutes;
-	uint8_t seconds;
-	int32_t latitude;		// lat × 1e7
-	int32_t longitude;	// lon × 1e7
-} datosNodo[NUMNODOS][NUMFILAS];
-
 static RadioEvents_t RadioEvents;
 void OnTxDone( void );
 void OnTxTimeout( void );
@@ -116,9 +85,10 @@ void ShowWebPage(void)
 	  WiFiClient client = server.available();   // Listen for incoming clients
 
   if (client) {                             // If a new client connects,
-		Serial.println("Nuevo cliente.");
+		Serial.println("Nuevo cliente");
     currentTime = millis();
     previousTime = currentTime;
+    Serial.println("New Client.");          // print a message out in the serial port
     String currentLine = "";                // make a String to hold incoming data from the client
     while (client.connected() && currentTime - previousTime <= timeoutTime) {  // loop while the client's connected
       currentTime = millis();
@@ -189,29 +159,6 @@ void ShowWebPage(void)
             } else {
               client.println("<p><a href=\"/27/off\"><button class=\"button button2\">OFF</button></a></p>");
             }*/
-
-            client.println("<table>");
-            client.println("<tr><th>ID Nodo</th><th>Fecha y hora</th><th>Latitud</th><th>Longitud</th></tr>");
-            for (int idx=0;idx<NUMNODOS;idx++){
-              for (int fil=0;fil<NUMFILAS;fil++) {
-                client.print("<tr>");
-                client.print("<td>");
-                for(int n=5;n>=0;n--) {
-                  client.printf("%02X",nodosRegistrados[idx][n]);
-                  if (n>0) Serial.print(":");
-                }
-                client.print("</td>");
-                client.printf("<td>%d/%02d/%02d %02d:%02d:%02d</td>",
-				                      datosNodo[idx][fil].year,datosNodo[idx][fil].month,datosNodo[idx][fil].day,
-                              datosNodo[idx][fil].hour,datosNodo[idx][fil].minutes,datosNodo[idx][fil].seconds);
-                client.printf("<td>%f</td>",(float)datosNodo[idx][fil].latitude / 1e7);
-                client.printf("<td>%f</td>",(float)datosNodo[idx][fil].longitude / 1e7);
-
-              }
-              client.println("</tr>");
-            }
-            client.println("</table>");
-            
             client.println("</body></html>");
 
             // The HTTP response ends with another blank line
@@ -235,40 +182,11 @@ void ShowWebPage(void)
   }
 }
 
-void SerialPrintMsgRX(void)
-{
-	Serial.println();
-  Serial.print("WiFi status: ");  Serial.print(WiFi.status());
-	Serial.printf(" --- Sitio web 'no seguro': http://%s", WiFi.localIP().toString());  //Serial.println(WiFi.localIP());
-	Serial.printf("\r\nMensaje %d recibido con Rssi %d, %d bytes, node ID: ",rxNumber,Rssi,rxSize);
-  for(int n=5;n>=0;n--) {
-    Serial.printf("%02X",mensaje.node_id[n]);
-    if (n>0) Serial.print(":");
-  }
-	Serial.println();
-  Serial.printf("%d/%02d/%02d %02d:%02d:%02d@%f,%f\r\n",
-				mensaje.year,mensaje.month,mensaje.day,mensaje.hour,mensaje.minutes,mensaje.seconds,
-				(float)mensaje.latitude / 1e7,(float)mensaje.longitude / 1e7);
-}
-
-int8_t BuscaNodo(const uint8_t node_id[6])
-{
-  static const uint8_t ID_VACIO[6] = {0};
-
-  if (memcmp(mensaje.node_id, ID_VACIO, 6) == 0) return -1;  // ID inválido → descartar
-
-  for (uint8_t i = 0; i < NUMNODOS; i++) {
-      if (memcmp(nodosRegistrados[i], node_id, 6) == 0) {
-          return i;   // nodo encontrado
-      }
-  }
-  return -1;          // no encontrado
-}
-
 void OnTxDone( void )
 {
 	Serial.print("TX done......");
 	state=STATE_RX;
+
 }
 
 void OnTxTimeout( void )
@@ -280,25 +198,19 @@ void OnTxTimeout( void )
 
 void OnRxDone( uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr )
 {
-	int idx;
-
-  rxNumber++;
+	rxNumber++;
   Rssi=rssi;
   rxSize=size;
+  memcpy(rxpacket, payload, size );
+  rxpacket[size]='\0';
   Radio.Sleep( );
-  //Serial.printf("\r\nMensaje recibido con Rssi %d , length %d\r\n",rssi,size);
-  if (size = sizeof(mensaje)) {
-    memcpy(&mensaje, payload, size);
-    SerialPrintMsgRX();
-    idx = BuscaNodo(mensaje.node_id);
-    if (idx >= 0) {
-      memmove(&datosNodo[idx][1], &datosNodo[idx][0], (NUMFILAS - 1) * sizeof(DatosNodos));
-      memcpy(&datosNodo[idx][0], &mensaje.year, sizeof(DatosNodos));
-    }
-  }
+	SerialPrintMsgRX("OK");
+  //Serial.printf("\r\nreceived packet \"%s\" with Rssi %d , length %d\r\n",rxpacket,Rssi,rxSize);
+  //Serial.println("wait to send next packet");
 	receiveflag = true;
   //state=STATE_TX;
 }
+
 
 void lora_init(void)
 {
@@ -339,15 +251,19 @@ void WIFISetUp(void)
 	delay(100);
   Serial.print("Connecting...");
 	byte count = 0;
-	while(WiFi.status() != WL_CONNECTED && count < 10) {
+	while(WiFi.status() != WL_CONNECTED && count < 10)
+	{
 		count ++;
 		delay(500);
 	}
 
-	if(WiFi.status() == WL_CONNECTED)	{
+	if(WiFi.status() == WL_CONNECTED)
+	{
 		Serial.println("OK");
 		server.begin();
-	}	else {
+	}
+	else
+	{
 		Serial.println("Failed");
 	}
 	Serial.println("WIFI Setup done");
@@ -377,11 +293,22 @@ void interrupt_handle(void)
 	}
 }
 
+void SerialPrintMsgRX(const char *msg)
+{
+	Serial.printf("ESP32ChipID=%04X",(uint16_t)(chipid>>32));//print High 2 bytes
+	Serial.printf("%08X\r\n",(uint32_t)chipid);//print Low 4bytes.
+	Serial.print("WiFi status: ");  Serial.print(WiFi.status());
+	Serial.printf(" --- IP Address: %s\r\n", WiFi.localIP().toString());
+	Serial.printf("Sitio web 'no seguro': http://%ste", WiFi.localIP().toString());
+	//Serial.print("IP Address: ");  Serial.println(WiFi.localIP());
+	Serial.printf("\r\nMensaje recibido: \"%s\" with Rssi %d , length %d\r\n",rxpacket,Rssi,rxSize);
+	//Serial.printf("Mensaje recibido: %s", msg);
+	Serial.println();
+}
+
 void setup()
 {
-	memset(datosNodo, 0, sizeof(datosNodo));  //Inicializa datos de los nodos.
-
-  Serial.begin(115200);
+	Serial.begin(115200);
 	delay(100);
 	WIFISetUp();
 
