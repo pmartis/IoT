@@ -21,6 +21,14 @@
 #include "HT_st7735.h"
 #include "HT_TinyGPS++.h"
 #include <../../../include/secrets.h>
+//#include <Adafruit_Sensor.h>
+#define SEALEVELPRESSURE_HPA (1013.25)
+#include <Adafruit_BME280.h>
+
+#define I2C_SDA 16
+#define I2C_SCL 15
+
+Adafruit_BME280 bme;
 
 typedef enum 
 {
@@ -348,6 +356,19 @@ void lora_status_handle(void)
 			mensaje.seconds = gps.time.second();
 			mensaje.latitude = (int32_t)round(gps.location.lat() * 1e7);
 			mensaje.longitude = (int32_t)round(gps.location.lng() * 1e7);
+
+			Serial.print("Temp: ");
+			Serial.print(bme.readTemperature());
+			Serial.print(" °C  ");
+
+			Serial.print("Presión: ");
+			Serial.print(bme.readPressure() / 100.0);
+			Serial.print(" hPa  ");
+
+			Serial.print("Humedad: ");
+			Serial.print(bme.readHumidity());
+			Serial.println(" %");
+
 			Serial.printf("\r\nEnviando mensaje: %d bytes --> ", sizeof(mensaje));
 			Serial.printf("%d/%02d/%02d %02d:%02d:%02d@%f,%f\r\n",
 				mensaje.year,mensaje.month,mensaje.day,mensaje.hour,mensaje.minutes,mensaje.seconds,
@@ -418,6 +439,7 @@ void gps_read(void)
 void setup()
 {
 	int n;
+	bool statusBME;
 
 	Serial.begin(115200);
 	Vext_ON();
@@ -442,7 +464,18 @@ void setup()
 	}
 	Serial.println();
 	//Serial.printf("%02X:%02X:%02X:%02X:%02X:%02X",chipid.macbytes[5],chipid.macbytes[4],chipid.macbytes[3],chipid.macbytes[2],chipid.macbytes[1],chipid.macbytes[0]);
- 
+	
+	Wire.begin(I2C_SDA, I2C_SCL);
+  Wire.setClock(100000);
+  delay(50);
+
+	if (!bme.begin(0x76)) {
+    Serial.println("BME280 no encontrado");
+    while (1);
+  }
+
+  Serial.println("BME280 inicializado");
+
 	pinMode(LED ,OUTPUT);
 	digitalWrite(LED, LOW);
 	test_status = WIFI_CONNECT_TEST_INIT;
