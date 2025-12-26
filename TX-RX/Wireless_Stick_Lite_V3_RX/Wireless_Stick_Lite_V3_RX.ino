@@ -42,18 +42,6 @@
 char txpacket[BUFFER_SIZE];
 char rxpacket[BUFFER_SIZE];
 
-struct __attribute__((packed)) Mensajes {
-	uint8_t node_id[6];
-	uint16_t year;
-	uint8_t month;
-	uint8_t day;
-	uint8_t hour;
-	uint8_t minutes;
-	uint8_t seconds;
-	int32_t latitude;		// lat × 1e7
-	int32_t longitude;	// lon × 1e7
-} mensaje;
-
 #define NUMNODOS 5
 #define NUMFILAS 10
 uint8_t nodosRegistrados[NUMNODOS][6] =  {{0x10, 0x20, 0xBA, 0x69, 0xC0, 0xE0},
@@ -69,9 +57,35 @@ struct __attribute__((packed)) DatosNodos {
 	uint8_t hour;
 	uint8_t minutes;
 	uint8_t seconds;
+
 	int32_t latitude;		// lat × 1e7
 	int32_t longitude;	// lon × 1e7
+
+	int16_t  temperature_x100;  // °C × 100
+  uint16_t humidity_x100;     // % × 100
+  uint32_t pressure;      		// Pa
 } datosNodo[NUMNODOS][NUMFILAS];
+
+
+struct __attribute__((packed)) Mensajes {
+	uint8_t node_id[6];
+	DatosNodos datos;
+} mensaje;
+
+struct __attribute__((packed)) Mensajes2 {
+	uint8_t node_id[6];
+	uint16_t year;
+	uint8_t month;
+	uint8_t day;
+	uint8_t hour;
+	uint8_t minutes;
+	uint8_t seconds;
+	int32_t latitude;		// lat × 1e7
+	int32_t longitude;	// lon × 1e7
+	int16_t  temperature_x100;  // °C × 100
+  uint16_t humidity_x100;     // % × 100
+  uint32_t pressure;      		// Pa
+} mensaje2;
 
 static RadioEvents_t RadioEvents;
 void OnTxDone( void );
@@ -159,18 +173,22 @@ void ShowWebPage(void)
 
             // Display the HTML web page
             client.println("<!DOCTYPE html><html>");
-            client.println("<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
+            client.println("<head>");
+            client.println("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
             client.println("<link rel=\"icon\" href=\"data:,\">");
             // CSS to style the on/off buttons
             // Feel free to change the background-color and font-size attributes to fit your preferences
-            client.println("<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}");
-            client.println(".button { background-color: #4CAF50; border: none; color: white; padding: 16px 40px;");
-            client.println("text-decoration: none; font-size: 30px; margin: 2px; cursor: pointer;}");
-            client.println(".button2 {background-color: #555555;}</style></head>");
+            client.println("<style>");
+            client.println("html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}");
+            client.println(".button { background-color: #4CAF50; border: none; color: white; padding: 16px 40px; text-decoration: none; font-size: 30px; margin: 2px; cursor: pointer;}");
+            client.println(".button2 {background-color: #555555;}");
+            client.println(".center { margin-left: auto; margin-right: auto;}");
+            client.println("</style>");
+            client.println("</head>");
 
             // Web Page Heading
             client.println("<body><h1>ESP32 - Perfe Web Server</h1>");
-            client.println("<p>Son las</p>");
+            //client.println("<p>Son las</p>");
             /*
             // Display current state, and ON/OFF buttons for GPIO 26
             client.println("<p>GPIO 26 - State " + output26State + "</p>");
@@ -190,8 +208,8 @@ void ShowWebPage(void)
               client.println("<p><a href=\"/27/off\"><button class=\"button button2\">OFF</button></a></p>");
             }*/
 
-            client.println("<table>");
-            client.println("<tr><th>ID Nodo</th><th>Fecha y hora</th><th>Latitud</th><th>Longitud</th></tr>");
+            client.println("<table class=\"center\">");
+            client.println("<tr><th>ID Nodo</th><th>Fecha y hora</th><th>Latitud</th><th>Longitud</th><th>Temperatura</th><th>Humedad</th><th>Presi&oacute;n</th></tr>");
             for (int idx=0;idx<NUMNODOS;idx++){
               for (int fil=0;fil<NUMFILAS;fil++) {
                 client.print("<tr>");
@@ -204,9 +222,11 @@ void ShowWebPage(void)
                 client.printf("<td>%d/%02d/%02d %02d:%02d:%02d</td>",
 				                      datosNodo[idx][fil].year,datosNodo[idx][fil].month,datosNodo[idx][fil].day,
                               datosNodo[idx][fil].hour,datosNodo[idx][fil].minutes,datosNodo[idx][fil].seconds);
-                client.printf("<td>%f</td>",(float)datosNodo[idx][fil].latitude / 1e7);
-                client.printf("<td>%f</td>",(float)datosNodo[idx][fil].longitude / 1e7);
-
+                client.printf("<td>%f</td>",(float)datosNodo[idx][fil].latitude / 1e7f);
+                client.printf("<td>%f</td>",(float)datosNodo[idx][fil].longitude / 1e7f);
+                client.printf("<td>%.2f &deg;C</td>",(float)datosNodo[idx][fil].temperature_x100 / 100.0f);
+                client.printf("<td>%.2f &#37;</td>",(float)datosNodo[idx][fil].humidity_x100 / 100.0f);
+                client.printf("<td>%.2f hPa</td>",(float)datosNodo[idx][fil].pressure / 100.0f);
               }
               client.println("</tr>");
             }
@@ -246,9 +266,11 @@ void SerialPrintMsgRX(void)
     if (n>0) Serial.print(":");
   }
 	Serial.println();
-  Serial.printf("%d/%02d/%02d %02d:%02d:%02d@%f,%f\r\n",
-				mensaje.year,mensaje.month,mensaje.day,mensaje.hour,mensaje.minutes,mensaje.seconds,
-				(float)mensaje.latitude / 1e7,(float)mensaje.longitude / 1e7);
+  Serial.printf("%d/%02d/%02d %02d:%02d:%02d@%f,%f#%d,%d,%d\r\n",
+				mensaje.datos.year,mensaje.datos.month,mensaje.datos.day,mensaje.datos.hour,mensaje.datos.minutes,mensaje.datos.seconds,
+				(float)mensaje.datos.latitude / 1e7,(float)mensaje.datos.longitude / 1e7,
+				mensaje.datos.temperature_x100,mensaje.datos.humidity_x100,mensaje.datos.pressure);
+  Serial.printf("mensaje: %d bytes, mensaje2: %d bytes\r\n",sizeof(mensaje),sizeof(mensaje2));
 }
 
 int8_t BuscaNodo(const uint8_t node_id[6])
@@ -293,7 +315,7 @@ void OnRxDone( uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr )
     idx = BuscaNodo(mensaje.node_id);
     if (idx >= 0) {
       memmove(&datosNodo[idx][1], &datosNodo[idx][0], (NUMFILAS - 1) * sizeof(DatosNodos));
-      memcpy(&datosNodo[idx][0], &mensaje.year, sizeof(DatosNodos));
+      memcpy(&datosNodo[idx][0], &mensaje.datos.year, sizeof(DatosNodos));
     }
   }
 	receiveflag = true;

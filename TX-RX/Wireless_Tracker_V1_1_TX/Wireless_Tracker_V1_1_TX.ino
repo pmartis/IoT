@@ -15,7 +15,7 @@
 
 
 #include "Arduino.h"
-#include "WiFi.h"
+//#include "WiFi.h"
 #include "LoRaWan_APP.h"
 #include <Wire.h>  
 #include "HT_st7735.h"
@@ -32,9 +32,9 @@ Adafruit_BME280 bme;
 
 typedef enum 
 {
-	WIFI_CONNECT_TEST_INIT,
-	WIFI_CONNECT_TEST,
-	WIFI_SCAN_TEST,
+	//WIFI_CONNECT_TEST_INIT,
+	//WIFI_CONNECT_TEST,
+	//WIFI_SCAN_TEST,
 	LORA_TEST_INIT,
 	LORA_COMMUNICATION_TEST,
 	DEEPSLEEP_TEST,
@@ -45,7 +45,7 @@ HT_st7735 st7735;
 TinyGPSPlus gps;
 
 test_status_t  test_status;
-uint16_t wifi_connect_try_num = 15;
+//uint16_t wifi_connect_try_num = 15;
 bool resendflag=false;
 bool deepsleepflag=false;
 bool interrupt_flag = false;
@@ -85,14 +85,20 @@ union macID {
 
 struct __attribute__((packed)) Mensajes {
 	uint8_t node_id[6];
+
 	uint16_t year;
 	uint8_t month;
 	uint8_t day;
 	uint8_t hour;
 	uint8_t minutes;
 	uint8_t seconds;
+
 	int32_t latitude;		// lat × 1e7
 	int32_t longitude;	// lon × 1e7
+
+	int16_t  temperature_x100;  // °C × 100
+  uint16_t humidity_x100;     // % × 100
+  uint32_t pressure;      		// Pa
 } mensaje;
 
 static RadioEvents_t RadioEvents;
@@ -202,6 +208,7 @@ void custom_delay(uint32_t time_ms)
 #endif
 }
 
+/*
 void wifi_connect_init(void)
 {
 	// Set WiFi to station mode and disconnect from an AP if it was previously connected
@@ -266,6 +273,7 @@ void wifi_scan(unsigned int value)
 		}
 	}
 }
+*/
 
 void interrupt_GPIO0(void)
 {
@@ -354,10 +362,15 @@ void lora_status_handle(void)
 			mensaje.hour = gps.time.hour();
 			mensaje.minutes = gps.time.minute();
 			mensaje.seconds = gps.time.second();
+
 			mensaje.latitude = (int32_t)round(gps.location.lat() * 1e7);
 			mensaje.longitude = (int32_t)round(gps.location.lng() * 1e7);
 
-			Serial.print("Temp: ");
+			mensaje.temperature_x100 = (int16_t)round(bme.readTemperature() * 100.0f);
+			mensaje.humidity_x100 = (uint16_t)round(bme.readHumidity() * 100.0f);
+			mensaje.pressure = (uint32_t)round(bme.readPressure());
+
+			/*Serial.print("Temp: ");
 			Serial.print(bme.readTemperature());
 			Serial.print(" °C  ");
 
@@ -367,12 +380,13 @@ void lora_status_handle(void)
 
 			Serial.print("Humedad: ");
 			Serial.print(bme.readHumidity());
-			Serial.println(" %");
+			Serial.println(" %");*/
 
 			Serial.printf("\r\nEnviando mensaje: %d bytes --> ", sizeof(mensaje));
-			Serial.printf("%d/%02d/%02d %02d:%02d:%02d@%f,%f\r\n",
+			Serial.printf("%d/%02d/%02d %02d:%02d:%02d@%f,%f#%d,%d,%d\r\n",
 				mensaje.year,mensaje.month,mensaje.day,mensaje.hour,mensaje.minutes,mensaje.seconds,
-				gps.location.lat(),gps.location.lng());
+				gps.location.lat(),gps.location.lng(),
+				mensaje.temperature_x100,mensaje.humidity_x100,mensaje.pressure);
 			Radio.Send( (uint8_t *) &mensaje, sizeof(mensaje) );
 			state=LOWPOWER;
 			break;
@@ -478,14 +492,15 @@ void setup()
 
 	pinMode(LED ,OUTPUT);
 	digitalWrite(LED, LOW);
-	test_status = WIFI_CONNECT_TEST_INIT;
+	//test_status = WIFI_CONNECT_TEST_INIT;
+	test_status = LORA_TEST_INIT;
 }
 
 void loop()
 {
 	interrupt_handle();
 	switch (test_status) {
-		case WIFI_CONNECT_TEST_INIT:
+		/*case WIFI_CONNECT_TEST_INIT:
 			wifi_connect_init();
 			test_status = WIFI_CONNECT_TEST;
 		case WIFI_CONNECT_TEST:
@@ -497,7 +512,7 @@ void loop()
 		case WIFI_SCAN_TEST:
 			wifi_scan(1);
 			test_status = LORA_TEST_INIT;
-			break;
+			break;*/
 		case LORA_TEST_INIT:
 			lora_init();
 			test_status = LORA_COMMUNICATION_TEST;
