@@ -13,47 +13,22 @@
  * https://github.com/pmartis/IoT
 */
 
-
 #include "Arduino.h"
-//#include "WiFi.h"
 #include "LoRaWan_APP.h"
-#include <Wire.h>  
+#include <Wire.h>
+
 #include "HT_st7735.h"
 #include "HT_TinyGPS++.h"
-#include <../../../include/secrets.h>
-//#include <Adafruit_Sensor.h>
+
 #define SEALEVELPRESSURE_HPA (1013.25)
 #include <Adafruit_BME280.h>
 
 #define I2C_SDA 16
 #define I2C_SCL 15
 
-Adafruit_BME280 bme;
-
-typedef enum 
-{
-	//WIFI_CONNECT_TEST_INIT,
-	//WIFI_CONNECT_TEST,
-	//WIFI_SCAN_TEST,
-	LORA_TEST_INIT,
-	LORA_COMMUNICATION_TEST,
-	DEEPSLEEP_TEST,
-	GPS_TEST,
-}test_status_t;
-
-HT_st7735 st7735;
-TinyGPSPlus gps;
-
-test_status_t  test_status;
-//uint16_t wifi_connect_try_num = 15;
-bool resendflag=false;
-bool deepsleepflag=false;
-bool interrupt_flag = false;
 /********************************* lora  *********************************************/
 #define RF_FREQUENCY                                868000000 // Hz
-
 #define TX_OUTPUT_POWER                             10        // dBm
-
 #define LORA_BANDWIDTH                              0         // [0: 125 kHz,
                                                               //  1: 250 kHz,
                                                               //  2: 500 kHz,
@@ -68,19 +43,38 @@ bool interrupt_flag = false;
 #define LORA_FIX_LENGTH_PAYLOAD_ON                  false
 #define LORA_IQ_INVERSION_ON                        false
 
-
 #define RX_TIMEOUT_VALUE                            1000
-#define BUFFER_SIZE                                 100 // Define the payload size here
 
+#define BUFFER_SIZE                                 100 // Tamaño de los paquetes
 char txpacket[BUFFER_SIZE];
 char rxpacket[BUFFER_SIZE];
+int16_t rxRssi, rxSize;
 
-//uint64_t chipid;
-char chipidTxt[13];
+typedef enum {
+	LOWPOWER,
+	STATE_RX,
+	STATE_TX,
+	STATE_TX_DONE
+} States_t;
+States_t state;
+
+typedef enum {
+	LORA_TEST_INIT,
+	LORA_COMMUNICATION_TEST,
+	DEEPSLEEP_TEST
+} test_status_t;
+test_status_t  test_status;
+
+HT_st7735 st7735;
+TinyGPSPlus gps;
+Adafruit_BME280 bme;
+
+bool resendflag=false;
+bool interrupt_flag = false;
 
 union macID {
 	uint8_t macbytes[6];
-	uint64_t mac64;		//The chip ID is essentially its MAC address(length: 6 bytes). Los 16 bits más altos del uint64_t devuelto están a cero.
+	uint64_t mac64;		//Los 6 bytes más bajos deL chip ID es la dirección MAC. Los 16 bits más altos del uint64_t devuelto están a cero.
 } chipid;
 
 struct __attribute__((packed)) Mensajes {
@@ -106,35 +100,17 @@ void OnTxDone( void );
 void OnTxTimeout( void );
 void OnRxDone( uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr );
 
-typedef enum
-{
-    LOWPOWER,
-    STATE_RX,
-    STATE_TX,
-    STATE_TX_DONE
-}States_t;
-
 int16_t txNumber = 0;
 int16_t rxNumber = 0;
-States_t state;
 bool sleepMode = false;
-int16_t Rssi,rxSize;
 
-String rssi = "RSSI --";
-String packet;
-String send_num;
-
-unsigned int counter = 0;
 bool receiveflag = false; // software flag for LoRa receiver, received data makes it true.
-long lastSendTime = 0;        // last send time
-int interval = 1000;          // interval between sends
 
-int16_t RssiDetection = 0;
-
+char txt[100];
 
 void OnTxDone( void )
 {
-	Serial.print("TX done......");
+	Serial.println("TX done......");
 	state=STATE_TX_DONE;
 	//state=STATE_RX;
 }
@@ -142,28 +118,29 @@ void OnTxDone( void )
 void OnTxTimeout( void )
 {
 	Radio.Sleep( );
-	Serial.print("TX Timeout......");
+	Serial.println("TX Timeout......");
 	state=STATE_TX;
 }
 
 void OnRxDone( uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr )
 {
 	rxNumber++;
-	Rssi=rssi;
+	rxRssi=rssi;
 	rxSize=size;
 	memcpy(rxpacket, payload, size );
 	rxpacket[size]='\0';
-	Radio.Sleep( );
-	Serial.printf("\r\nreceived packet \"%s\" with Rssi %d , length %d\r\n",rxpacket,Rssi,rxSize);
-	Serial.println("wait to send next packet");
 	receiveflag = true;
 	state=STATE_TX;
+
+	Radio.Sleep( );
+	Serial.printf("\r\nreceived packet \"%s\" with Rssi %d , length %d\r\n",rxpacket,rxRssi,rxSize);
+	Serial.println("wait to send next packet");
 }
 
 void lora_init(void)
 {
 	txNumber=0;
-	Rssi=0;
+	rxRssi=0;
 	rxNumber = 0;
 	RadioEvents.TxDone = OnTxDone;
 	RadioEvents.TxTimeout = OnTxTimeout;
@@ -181,9 +158,6 @@ void lora_init(void)
 									LORA_SYMBOL_TIMEOUT, LORA_FIX_LENGTH_PAYLOAD_ON,
 									0, true, 0, 0, LORA_IQ_INVERSION_ON, true );
 	state=STATE_TX;
-	st7735.st7735_fill_screen(ST7735_BLACK);
-	//packet ="waiting lora data!";
-	//st7735.st7735_write_str(0, 10, packet, Font_7x10);
 }
 
 
@@ -198,82 +172,13 @@ void custom_delay(uint32_t time_ms)
 		delay(10);
 		if(	interrupt_flag == true) {
 			delay(200);
-			if(digitalRead(0)==0) {
-				break;
-			}
+			if(digitalRead(0)==0) break;
 		}
 	}
 #else
 		delay(time_ms);
 #endif
 }
-
-/*
-void wifi_connect_init(void)
-{
-	// Set WiFi to station mode and disconnect from an AP if it was previously connected
-	WiFi.disconnect(true);
-	custom_delay(100);
-	WiFi.mode(WIFI_STA);
-	WiFi.setAutoReconnect(true);
-	WiFi.begin(WIFI_USER, WIFI_PASS);//fill in "Your WiFi SSID","Your Password"
-	st7735.st7735_write_str(0, 20, "WIFI Setup done", Font_7x10);
-}
-
-bool wifi_connect_try(uint8_t try_num)
-{
-	uint8_t count;
-	while(WiFi.status() != WL_CONNECTED && count < try_num) {
-		count ++;
-		st7735.st7735_fill_screen(ST7735_BLACK);
-		st7735.st7735_write_str(0, 0, "wifi connecting...", Font_7x10);
-		custom_delay(500);
-	}
-	if(WiFi.status() == WL_CONNECTED) {
-		st7735.st7735_fill_screen(ST7735_BLACK);
-		st7735.st7735_write_str(0, 0, "wifi connect OK", Font_7x10);
-		custom_delay(2500);
-		return true;
-	} else {
-		st7735.st7735_fill_screen(ST7735_BLACK);
-		st7735.st7735_write_str(0, 0, "wifi connect failed", Font_7x10);
-		custom_delay(1000);
-		return false;
-	}	
-}
-
-void wifi_scan(unsigned int value)
-{
-	unsigned int i;
-	WiFi.disconnect(); //
-  WiFi.mode(WIFI_STA);
-	st7735.st7735_fill_screen(ST7735_BLACK);
-	for(i=0;i<value;i++) {
-		st7735.st7735_write_str(0, 0, "Scan start...", Font_7x10);
-		int n = WiFi.scanNetworks();
-		st7735.st7735_write_str(0, 30, "Scan done", Font_7x10);
-		
-		if (n == 0) {
-			st7735.st7735_fill_screen(ST7735_BLACK);
-			st7735.st7735_write_str(0, 0, "no network found", Font_7x10);
-			custom_delay(2000);
-		} else {
-			st7735.st7735_fill_screen(ST7735_BLACK);
-			st7735.st7735_write_str(0, 0, (String)n, Font_7x10);
-			st7735.st7735_write_str(30, 0, "networks found:", Font_7x10);
-			
-			custom_delay(2000);
-
-			for (int i = 0; (i < n) && (i < 0); ++i) {
-				String str = (String)(i + 1) +":"+(String)(WiFi.SSID(i))+" ("+(String)(WiFi.RSSI(i))+")";
-				st7735.st7735_write_str(0, 0, str, Font_7x10);
-				custom_delay(100);
-				st7735.st7735_fill_screen(ST7735_BLACK);
-			}
-		}
-	}
-}
-*/
 
 void interrupt_GPIO0(void)
 {
@@ -287,15 +192,10 @@ void interrupt_handle(void)
 		if(digitalRead(0)==0) {
 			if(rxNumber < 2) {
 				delay(500);
-				if(digitalRead(0)==0) {
-					test_status = GPS_TEST;
-				} else {
-					resendflag=true;
-				}
-			} else {
-				test_status = DEEPSLEEP_TEST;
-				// deepsleepflag=true;
-			}
+				/*if(digitalRead(0)==0) test_status = GPS_TEST;
+				else resendflag=true;*/
+				resendflag=true;
+			} else test_status = DEEPSLEEP_TEST;
 		}
 	}
 }
@@ -325,31 +225,23 @@ void lora_status_handle(void)
 	}
 
 	if(receiveflag && (state==LOWPOWER) ) {
-		receiveflag = false;
-		packet ="Rdata:";
-		int i = 0;
-		while(i < rxSize) {
-			packet += rxpacket[i];
-			i++;
-		}
-		// packSize = "R_Size:";
-		// packSize += String(rxSize,DEC);
-		String packSize = "R_rssi:";
-		packSize += String(Rssi,DEC);
-		send_num = "send num:";
-		send_num += String(txNumber,DEC);
 		st7735.st7735_fill_screen(ST7735_BLACK);
-		delay(100);
-		st7735.st7735_write_str(0, 0, packet, Font_7x10);
-		st7735.st7735_write_str(0, 40, packSize, Font_7x10);
-		st7735.st7735_write_str(0, 60, send_num, Font_7x10);
-		if((rxNumber%2)==0) {
-			digitalWrite(LED, HIGH);  
-		}
+		receiveflag = false;
+		st7735.st7735_write_str(0, 0, "Rdata:", Font_7x10);
+		n = rxSize;
+		if (sizeof(txt) < rxSize) n = sizeof(txt);
+		snprintf(txt, n, "%s", rxpacket);
+		st7735.st7735_write_str(8, 0, txt, Font_7x10);
+		snprintf(txt, sizeof(txt),"RX_rssi: %d", rxRssi);
+		st7735.st7735_write_str(0, 40, txt, Font_7x10);
+		snprintf(txt, sizeof(txt),"RX num: %d", txNumber);
+		st7735.st7735_write_str(0, 60, txt, Font_7x10);
+		if((rxNumber%2)==0) digitalWrite(LED, HIGH);
 	}
+	
 	switch(state) {
 		case STATE_TX:
-			delay(1000);
+			Serial.println();
 			txNumber++;
 			for(n=5;n>=0;n--){
 				mensaje.node_id[n] = chipid.macbytes[n];
@@ -370,34 +262,22 @@ void lora_status_handle(void)
 			mensaje.humidity_x100 = (uint16_t)round(bme.readHumidity() * 100.0f);
 			mensaje.pressure = (uint32_t)round(bme.readPressure());
 
-			/*Serial.print("Temp: ");
-			Serial.print(bme.readTemperature());
-			Serial.print(" °C  ");
-
-			Serial.print("Presión: ");
-			Serial.print(bme.readPressure() / 100.0);
-			Serial.print(" hPa  ");
-
-			Serial.print("Humedad: ");
-			Serial.print(bme.readHumidity());
-			Serial.println(" %");*/
-
-			Serial.printf("\r\nEnviando mensaje: %d bytes --> ", sizeof(mensaje));
+			Serial.printf(" --- Enviando mensaje (%d bytes): \r\n", sizeof(mensaje));
 			Serial.printf("%d/%02d/%02d %02d:%02d:%02d@%f,%f#%d,%d,%d\r\n",
-				mensaje.year,mensaje.month,mensaje.day,mensaje.hour,mensaje.minutes,mensaje.seconds,
-				gps.location.lat(),gps.location.lng(),
-				mensaje.temperature_x100,mensaje.humidity_x100,mensaje.pressure);
+										mensaje.year,mensaje.month,mensaje.day,mensaje.hour,mensaje.minutes,mensaje.seconds,
+										gps.location.lat(),gps.location.lng(),
+										mensaje.temperature_x100,mensaje.humidity_x100,mensaje.pressure);
 			Radio.Send( (uint8_t *) &mensaje, sizeof(mensaje) );
-			state=LOWPOWER;
+			state = LOWPOWER;
 			break;
 		case STATE_TX_DONE:
 			delay(10000);
-			state=STATE_TX;
+			state = STATE_TX;
 			break;
 		case STATE_RX:
 			Serial.println("into RX mode");
 			Radio.Rx( 0 );
-			state=LOWPOWER;
+			state = LOWPOWER;
 			break;
 		case LOWPOWER:
 			Radio.IrqProcess( );
@@ -420,36 +300,6 @@ void Vext_OFF()
 	digitalWrite(Vext, LOW);
 }
 
-void gps_read(void)
-{
-	char txt[60];
-
-	if(Serial2.available()>0) {
-		if(Serial2.peek()!='\n') {
-			gps.encode(Serial2.read());
-		} else {
-			Serial2.read();
-			if(gps.time.second()==0) {
-				return;
-			}
-			st7735.st7735_fill_screen(ST7735_BLACK);
-			st7735.st7735_write_str(0, 0, "gps_test", Font_7x10);
-			Serial.print("GPS - ");
-			snprintf(txt, sizeof(txt),"%d/%02d/%02d %02d:%02d:%02d.%02d",gps.date.year(),gps.date.month(),gps.date.day(),gps.time.hour(),gps.time.minute(),gps.time.second(),gps.time.centisecond());
-			st7735.st7735_write_str(0, 10, txt, Font_7x10);
-			Serial.print(txt); Serial.print(" - ");
-			snprintf(txt, sizeof(txt), "LAT: %.6f\0", gps.location.lat());
-			st7735.st7735_write_str(0, 20, txt, Font_7x10);
-			Serial.print(txt); Serial.print(" - ");
-			snprintf(txt, sizeof(txt), "LON: %.6f\0", gps.location.lng());
-			st7735.st7735_write_str(0, 30, txt, Font_7x10);
-			Serial.println(txt);
-			delay(5000);
-			while(Serial2.read()>0);
-		}
-	}
-}
-
 void setup()
 {
 	int n;
@@ -459,25 +309,23 @@ void setup()
 	Vext_ON();
 	Serial2.begin(115200,SERIAL_8N1,33,34);
 	delay(100);
+
 	Mcu.begin(HELTEC_BOARD,SLOW_CLK_TPYE);
 	st7735.st7735_init();
 	st7735.st7735_fill_screen(ST7735_BLACK);
 
 	attachInterrupt(0,interrupt_GPIO0,FALLING);
 	resendflag=false;
-	deepsleepflag=false;
 	interrupt_flag = false;
 
-	chipid.mac64=ESP.getEfuseMac();//The chip ID is essentially its MAC address(length: 6 bytes).
-	snprintf(chipidTxt, sizeof(chipidTxt), "%04X%08X",(uint16_t)(chipid.mac64>>32),(uint32_t)chipid.mac64);
-	Serial.printf("ESP32ChipID=%04X",(uint16_t)(chipid.mac64>>32));//print High 2 bytes
-	Serial.printf("%08X\n",(uint32_t)chipid.mac64);//print Low 4bytes.
+	Serial.println();
+	chipid.mac64 = ESP.getEfuseMac();
+	Serial.print("ESP32ChipID = ");
 	for(n=5;n>=0;n--){
 		Serial.printf("%02X",chipid.macbytes[n]);
 		if (n>0) Serial.print(":");
 	}
 	Serial.println();
-	//Serial.printf("%02X:%02X:%02X:%02X:%02X:%02X",chipid.macbytes[5],chipid.macbytes[4],chipid.macbytes[3],chipid.macbytes[2],chipid.macbytes[1],chipid.macbytes[0]);
 	
 	Wire.begin(I2C_SDA, I2C_SCL);
   Wire.setClock(100000);
@@ -487,32 +335,19 @@ void setup()
     Serial.println("BME280 no encontrado");
     while (1);
   }
-
   Serial.println("BME280 inicializado");
 
 	pinMode(LED ,OUTPUT);
 	digitalWrite(LED, LOW);
-	//test_status = WIFI_CONNECT_TEST_INIT;
 	test_status = LORA_TEST_INIT;
 }
 
 void loop()
 {
 	interrupt_handle();
+	if(Serial2.available()>0) gps.encode(Serial2.read());
+
 	switch (test_status) {
-		/*case WIFI_CONNECT_TEST_INIT:
-			wifi_connect_init();
-			test_status = WIFI_CONNECT_TEST;
-		case WIFI_CONNECT_TEST:
-			if(wifi_connect_try(1)==true)	{
-				test_status = WIFI_SCAN_TEST;
-			}
-			wifi_connect_try_num--;
-			break;
-		case WIFI_SCAN_TEST:
-			wifi_scan(1);
-			test_status = LORA_TEST_INIT;
-			break;*/
 		case LORA_TEST_INIT:
 			lora_init();
 			test_status = LORA_COMMUNICATION_TEST;
@@ -523,11 +358,7 @@ void loop()
 		case DEEPSLEEP_TEST:
 			enter_deepsleep();
 			break;
-		case GPS_TEST:
-			gps_read();
-			break;
 		default:
 			break;
 	}
-	gps_read();
 }

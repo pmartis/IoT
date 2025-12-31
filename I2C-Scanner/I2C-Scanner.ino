@@ -1,9 +1,12 @@
 #include <Wire.h>
+#define I2C_SDA 16
+#define I2C_SCL 15
 
 void setup() {
   Serial.begin(115200);
-  Wire.begin(9, 8);      // cambia aquí
-  Wire.setClock(400000);
+	Wire.begin(I2C_SDA, I2C_SCL);
+  Wire.setClock(100000);
+  delay(50);
 }
 
 void loop() {
