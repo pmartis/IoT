@@ -11,6 +11,8 @@ Una segunda prueba de conexión punto a punto está en la carpeta TX-RX-ASCII.
 Estos ejemplos se han desarrollado con pequeñas modificaciones a partir de los ejemplos ping-pong de Heltec.
 Se trata de una conexión unidireccional, en la que el receptor recibe y muestra en un terminal todo lo que oiga.
 
+https://youtu.be/czkeUJXSHo8?si=uCrelNlibV4LzQ0K
+
 TX-RX
 =====
 Ejemplos de código en el que los datos se emiten en formato binario y además de han añadido funcionalidades de filtrado para solo tratar los datos de los dispostivos cuya MAC coincida con alguna de las almacenadas en el código.
