@@ -18,6 +18,7 @@
 
 #include "HT_st7735.h"
 #include "HT_TinyGPS++.h"
+#define GNSS_BUFFER	512
 
 #include <HX711.h>		//Bogde’s HX711
 #define HX711_DOUT 45
@@ -29,8 +30,8 @@
 #define RAWPESO_1	4380.0	// round(438004,285714286/100.0;0)
 #define KGPESO_1	1.03
 
-#define SEALEVELPRESSURE_HPA (1013.25)
 #include <Adafruit_BME280.h>
+#define SEALEVELPRESSURE_HPA (1013.25)
 
 #define I2C_SDA 16
 #define I2C_SCL 15
@@ -105,11 +106,6 @@ struct __attribute__((packed)) Mensajes {
   uint32_t pressure;      		// Pa
 } mensaje;
 
-static RadioEvents_t RadioEvents;
-void OnTxDone( void );
-void OnTxTimeout( void );
-void OnRxDone( uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr );
-
 int16_t txNumber = 0;
 int16_t rxNumber = 0;
 bool sleepMode = false;
@@ -117,6 +113,8 @@ bool sleepMode = false;
 bool receiveflag = false; // software flag for LoRa receiver, received data makes it true.
 
 char txt[100];
+
+static RadioEvents_t RadioEvents;
 
 void OnTxDone( void )
 {
@@ -225,6 +223,17 @@ void enter_deepsleep(void)
 	esp_deep_sleep_start();
 } 
 
+void SerialPrintMAC(void)
+{
+	Serial.println();
+	Serial.print("ESP32ChipID = ");
+	for(int n=5; n>=0; n--){
+		Serial.printf("%02X",chipid.macbytes[n]);
+		if (n > 0) Serial.print(":");
+	}
+	Serial.println();
+}
+
 float raw_a_kg(long adcRaw)
 {
 	return((KGPESO_1-KGPESO_0)/(RAWPESO_1-RAWPESO_0)*((float)adcRaw/100.0-RAWPESO_0));
@@ -232,59 +241,65 @@ float raw_a_kg(long adcRaw)
 
 void data_tx(void)
 {
-	float peso = 99999.9;
+	static unsigned long nextMsgTime = 0ul;
+	unsigned long actualTime;
+	const unsigned long INTERVALTIME = 30000;
+	static float peso = 99999.9;
 
-	Serial.println();
-	Serial.println("Leyendo peso...");
+	actualTime = millis();
 	if (LoadCell.is_ready()) {
-    peso = raw_a_kg(LoadCell.read());
-    Serial.print("Peso: ");
-		Serial.println(peso);
-  } else {
-    Serial.println("HX711 no listo");
-  }
-	txNumber++;
-	for(int n=5;n>=0;n--){
-		mensaje.node_id[n] = chipid.macbytes[n];
-		Serial.printf("%02X",chipid.macbytes[n]);
-		if (n>0) Serial.print(":");
+		peso = raw_a_kg(LoadCell.read());
+		//Serial.printf("\r\nPeso: %f\r\n",peso);
+		snprintf(txt, sizeof(txt),"Peso: %.2f kg    ", peso);
+		st7735.st7735_write_str(0, 40, txt, Font_7x10);
+	} //else Serial.println("HX711 no listo");
+	
+	if (actualTime >= nextMsgTime) {
+		nextMsgTime = actualTime +INTERVALTIME;
+
+		txNumber++;
+
+		//Construcción del mensaje LoRa
+		//memcpy(mensaje.node_id, chipid.macbytes, 6);
+		SerialPrintMAC();
+
+		mensaje.year = gps.date.year();
+		mensaje.month = gps.date.month();
+		mensaje.day = gps.date.day();
+		mensaje.hour = gps.time.hour();
+		mensaje.minutes = gps.time.minute();
+		mensaje.seconds = gps.time.second();
+
+		mensaje.latitude = (int32_t)round(gps.location.lat() * 1e7);
+		mensaje.longitude = (int32_t)round(gps.location.lng() * 1e7);
+
+		mensaje.temperature_x100 = (int16_t)round(bme.readTemperature() * 100.0f);
+		mensaje.humidity_x100 = (uint16_t)round(bme.readHumidity() * 100.0f);
+		mensaje.pressure = (uint32_t)round(bme.readPressure());
+
+		Serial.printf(" --- Enviando mensaje (%d bytes): \r\n", sizeof(mensaje));
+		Serial.printf("     %d/%02d/%02d %02d:%02d:%02d@%f,%f#%d,%d,%d\r\n",
+									mensaje.year,mensaje.month,mensaje.day,mensaje.hour,mensaje.minutes,mensaje.seconds,
+									gps.location.lat(),gps.location.lng(),
+									mensaje.temperature_x100,mensaje.humidity_x100,mensaje.pressure);
+		Radio.Send( (uint8_t *) &mensaje, sizeof(mensaje) );
+		state = LOWPOWER;
+		Serial.printf("Peso: %f\r\n",peso);
+
+		st7735.st7735_fill_screen(ST7735_BLACK);
+		snprintf(txt, sizeof(txt),"%d/%02d/%02d %02d:%02d:%02d",
+									mensaje.year,mensaje.month,mensaje.day,mensaje.hour,mensaje.minutes,mensaje.seconds);
+		st7735.st7735_write_str(0, 0, txt, Font_7x10);
+		snprintf(txt, sizeof(txt),"%f, %f",
+									gps.location.lat(),gps.location.lng());
+		st7735.st7735_write_str(0, 10, txt, Font_7x10);
+		snprintf(txt, sizeof(txt),"Temp.: %.2f, %.2f",
+									(float)mensaje.temperature_x100 / 100.0f,(float)mensaje.humidity_x100 / 100.0f);
+		st7735.st7735_write_str(0, 20, txt, Font_7x10);
+		st7735.st7735_write_str(strlen(txt)*7, 20, "%", Font_7x10);
+		snprintf(txt, sizeof(txt),"%.2f hPa", (float)mensaje.pressure / 100.0f);
+		st7735.st7735_write_str(0, 30, txt, Font_7x10);
 	}
-	mensaje.year = gps.date.year();
-	mensaje.month = gps.date.month();
-	mensaje.day = gps.date.day();
-	mensaje.hour = gps.time.hour();
-	mensaje.minutes = gps.time.minute();
-	mensaje.seconds = gps.time.second();
-
-	mensaje.latitude = (int32_t)round(gps.location.lat() * 1e7);
-	mensaje.longitude = (int32_t)round(gps.location.lng() * 1e7);
-
-	mensaje.temperature_x100 = (int16_t)round(bme.readTemperature() * 100.0f);
-	mensaje.humidity_x100 = (uint16_t)round(bme.readHumidity() * 100.0f);
-	mensaje.pressure = (uint32_t)round(bme.readPressure());
-
-	Serial.printf(" --- Enviando mensaje (%d bytes): \r\n", sizeof(mensaje));
-	Serial.printf("%d/%02d/%02d %02d:%02d:%02d@%f,%f#%d,%d,%d\r\n",
-								mensaje.year,mensaje.month,mensaje.day,mensaje.hour,mensaje.minutes,mensaje.seconds,
-								gps.location.lat(),gps.location.lng(),
-								mensaje.temperature_x100,mensaje.humidity_x100,mensaje.pressure);
-	Radio.Send( (uint8_t *) &mensaje, sizeof(mensaje) );
-	state = LOWPOWER;
-	st7735.st7735_fill_screen(ST7735_BLACK);
-	snprintf(txt, sizeof(txt),"%d/%02d/%02d %02d:%02d:%02d",
-								mensaje.year,mensaje.month,mensaje.day,mensaje.hour,mensaje.minutes,mensaje.seconds);
-	st7735.st7735_write_str(0, 0, txt, Font_7x10);
-	snprintf(txt, sizeof(txt),"%f, %f",
-								gps.location.lat(),gps.location.lng());
-	st7735.st7735_write_str(0, 10, txt, Font_7x10);
-	snprintf(txt, sizeof(txt),"Temp.: %.2f, %.2f",
-								(float)mensaje.temperature_x100 / 100.0f,(float)mensaje.humidity_x100 / 100.0f);
-	st7735.st7735_write_str(0, 20, txt, Font_7x10);
-	st7735.st7735_write_str(strlen(txt)*7, 20, "%", Font_7x10);
-	snprintf(txt, sizeof(txt),"%.2f hPa", (float)mensaje.pressure / 100.0f);
-	st7735.st7735_write_str(0, 30, txt, Font_7x10);
-	snprintf(txt, sizeof(txt),"Peso: %.2f kg", peso);
-	st7735.st7735_write_str(0, 40, txt, Font_7x10);
 }
 
 void lora_status_handle(void)
@@ -316,8 +331,6 @@ void lora_status_handle(void)
 			data_tx();
 			break;
 		case STATE_TX_DONE:
-			//delay(10000);
-			custom_delay(10000);
 			state = STATE_TX;
 			break;
 		case STATE_RX:
@@ -333,7 +346,7 @@ void lora_status_handle(void)
 	}
 }
 
-//Vext --> GNSS
+//Vext --> GNSS = VGNSS_CTRL = 3
 void Vext_ON()
 {
 	pinMode(Vext, OUTPUT);
@@ -354,8 +367,11 @@ void setup()
 	Serial.begin(115200);
 	delay(100);
 	Mcu.begin(HELTEC_BOARD, SLOW_CLK_TPYE);
-	Vext_ON();	//Vext --> GNSS
 
+	chipid.mac64 = ESP.getEfuseMac();
+	memcpy(mensaje.node_id, chipid.macbytes, 6);	//Cabecera del mensaje LoRa
+	SerialPrintMAC();
+	
 	Wire.begin(I2C_SDA, I2C_SCL);
   Wire.setClock(100000);
   delay(50);
@@ -370,35 +386,16 @@ void setup()
   Serial.println("BME280 inicializado");
 
 	Serial.println("Inicializando HX711...");
-  /*LoadCell.begin();
-  unsigned long stabilizingtime = 2000; // preciscion right after power-up can be improved by adding a few seconds of stabilizing time
-  boolean _tare = true; //set this to false if you don't want tare to be performed in the next step
-  LoadCell.start(stabilizingtime, _tare);
-	if (LoadCell.getTareTimeoutFlag()) {
-    Serial.println("Timeout, check MCU>HX711 wiring and pin designations");
-    while (1);
-  } else {
-    //LoadCell.setCalFactor(0.0); // set calibration value (float)
-    Serial.println("HX711 listo");
-  }*/
 	LoadCell.begin(HX711_DOUT, HX711_SCK);
-  Serial.println("Inicializando HX711...");
 
+	Serial2.setRxBufferSize(GNSS_BUFFER);
 	Serial2.begin(115200,SERIAL_8N1,33,34);	//GNSS
-	delay(100);
+	Vext_ON();	//Vext --> GNSS
+	Serial.println("GNSS inicializado.");
 
 	attachInterrupt(0,interrupt_GPIO0,FALLING);
 	resendflag=false;
 	interrupt_flag = false;
-
-	Serial.println();
-	chipid.mac64 = ESP.getEfuseMac();
-	Serial.print("ESP32ChipID = ");
-	for(n=5;n>=0;n--){
-		Serial.printf("%02X",chipid.macbytes[n]);
-		if (n>0) Serial.print(":");
-	}
-	Serial.println();
 
 	pinMode(LED ,OUTPUT);
 	digitalWrite(LED, LOW);
@@ -407,8 +404,15 @@ void setup()
 
 void loop()
 {
+	int nCh;
+
 	interrupt_handle();
-	if(Serial2.available()>0) gps.encode(Serial2.read());
+
+	nCh = Serial2.available();
+	if( nCh > 0) {
+		while (Serial2.available()) gps.encode(Serial2.read());
+		if( nCh > GNSS_BUFFER) Serial.printf("***** Serial GNSS overflow - bytes recibidos > %d : %d\r\n", GNSS_BUFFER, nCh);
+	}
 
 	switch (test_status) {
 		case LORA_TEST_INIT:
