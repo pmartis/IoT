@@ -5,6 +5,10 @@ El conjunto de ejemplos contenidos en este repositorio están basados en la prog
 
 Para probar dos dispositivos es conveniente empezar con los ejemplos ping-pong de Heltec. Dos dispositivos se enviaran un texto de saludo sucesivamente actuando tanto de emisor como de receptor. Tras esta prueba se puede empezar a modificar el código para adaptarlo poco a poco a las funcionalidades que queremos conseguir.
 
+Language Reference: https://docs.arduino.cc/language-reference/
+
+https://cheatsheets.zip/arduino-programming.html
+
 TX-RX-ASCII
 ===========
 Una segunda prueba de conexión punto a punto está en la carpeta TX-RX-ASCII.
